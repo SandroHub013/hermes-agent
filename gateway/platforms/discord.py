@@ -118,6 +118,25 @@ def _build_allowed_mentions():
     )
 
 
+def _sniff_image_mime(head: bytes) -> Optional[str]:
+    """Return the canonical image MIME for the leading bytes, or None.
+
+    Covers the four formats Hermes already advertises as supported
+    (PNG / JPEG / GIF / WEBP). Used to defeat Discord-reported MIMEs that
+    disagree with the actual file bytes — Anthropic's vision API rejects
+    such mismatches with HTTP 400 (issue #21049).
+    """
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 class VoiceReceiver:
     """Captures and decodes voice audio from a Discord voice channel.
 
@@ -3899,8 +3918,19 @@ class DiscordAdapter(BasePlatformAdapter):
                     if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
                         ext = ".jpg"
                     cached_path = await self._cache_discord_image(att, ext)
+                    # Discord-reported Content-Type can disagree with the
+                    # actual file bytes (e.g. image/webp for a PNG). Anthropic
+                    # validates media_type vs. magic bytes and rejects the
+                    # mismatch (issue #21049). Sniff the first 12 bytes from
+                    # the cached file and prefer the sniffed MIME when known.
+                    sniffed_mime: Optional[str] = None
+                    try:
+                        with open(cached_path, "rb") as _f:
+                            sniffed_mime = _sniff_image_mime(_f.read(12))
+                    except Exception:
+                        sniffed_mime = None
                     media_urls.append(cached_path)
-                    media_types.append(content_type)
+                    media_types.append(sniffed_mime or content_type)
                     print(f"[Discord] Cached user image: {cached_path}", flush=True)
                 except Exception as e:
                     print(f"[Discord] Failed to cache image attachment: {e}", flush=True)
