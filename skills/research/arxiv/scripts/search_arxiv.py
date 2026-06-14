@@ -13,9 +13,31 @@ Usage:
 import sys
 import urllib.request
 import urllib.parse
+import urllib.error
 import xml.etree.ElementTree as ET
 
 NS = {'a': 'http://www.w3.org/2005/Atom'}
+
+
+def _fetch(url):
+    """GET *url* from the arXiv API, returning the raw response bytes.
+
+    Network failures (HTTP errors, DNS/connection problems, timeouts) print a
+    clean one-line message to stderr and exit non-zero instead of dumping a raw
+    Python traceback at the user.
+    """
+    req = urllib.request.Request(url, headers={'User-Agent': 'HermesAgent/1.0'})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        print(f"arXiv API error: HTTP {e.code} {e.reason}", file=sys.stderr)
+        sys.exit(1)
+    except (urllib.error.URLError, TimeoutError) as e:
+        reason = getattr(e, "reason", e)
+        print(f"Network error contacting arXiv: {reason}", file=sys.stderr)
+        sys.exit(1)
+
 
 def search(query=None, author=None, category=None, ids=None, max_results=5, sort="relevance"):
     params = {}
@@ -42,12 +64,14 @@ def search(query=None, author=None, category=None, ids=None, max_results=5, sort
     params['sortOrder'] = 'descending'
     
     url = "https://export.arxiv.org/api/query?" + "&".join(f"{k}={v}" for k, v in params.items())
-    
-    req = urllib.request.Request(url, headers={'User-Agent': 'HermesAgent/1.0'})
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        data = resp.read()
-    
-    root = ET.fromstring(data)
+
+    data = _fetch(url)
+
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as e:
+        print(f"Could not parse arXiv response: {e}", file=sys.stderr)
+        sys.exit(1)
     entries = root.findall('a:entry', NS)
     
     if not entries:
