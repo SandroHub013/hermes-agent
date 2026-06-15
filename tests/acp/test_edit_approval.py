@@ -205,3 +205,34 @@ def test_workspace_auto_approval_allows_workspace_and_tmp_but_not_sensitive(tmp_
         "session",
         str(tmp_path),
     )
+
+
+def test_env_variants_and_ssh_keys_are_never_auto_approved(tmp_path):
+    # Dotenv files beyond the original .env/.env.local/.env.production trio, plus
+    # the full set of ssh-keygen default private-key names, must still prompt
+    # under autonomous policies rather than slipping through auto-approval.
+    sensitive_names = [
+        ".env",
+        ".env.development",
+        ".env.staging",
+        ".env.test.local",
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+    ]
+    for name in sensitive_names:
+        target = tmp_path / name
+        for policy in ("session", "workspace_session"):
+            assert not should_auto_approve_edit(
+                EditProposal("write_file", str(target), None, "SECRET=x", {}),
+                policy,
+                str(tmp_path),
+            ), f"{name} should not auto-approve under {policy}"
+
+    # A regular workspace file is unaffected and still auto-approves.
+    assert should_auto_approve_edit(
+        EditProposal("write_file", str(tmp_path / "config.py"), None, "x", {}),
+        "workspace_session",
+        str(tmp_path),
+    )

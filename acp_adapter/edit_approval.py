@@ -41,7 +41,11 @@ _EDIT_APPROVAL_REQUESTER: ContextVar[EditApprovalRequester | None] = ContextVar(
 _PERMISSION_REQUEST_IDS = count(1)
 
 
-SENSITIVE_AUTO_APPROVE_NAMES = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519"}
+# Default filenames of SSH private keys produced by ``ssh-keygen``. The matching
+# ``*.pub`` public keys are intentionally absent — they are not secrets. Dotenv
+# files are matched separately by prefix (see ``_is_sensitive_env_filename``) so
+# every ``.env.<suffix>`` variant is covered, not just a hand-picked few.
+SENSITIVE_AUTO_APPROVE_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"}
 AUTO_APPROVE_ASK = "ask"
 AUTO_APPROVE_WORKSPACE = "workspace_session"
 AUTO_APPROVE_SESSION = "session"
@@ -137,12 +141,23 @@ def build_edit_proposal(tool_name: str, arguments: dict[str, Any]) -> EditPropos
     return None
 
 
+def _is_sensitive_env_filename(name: str) -> bool:
+    """True for dotenv secret files: ``.env`` and any ``.env.<suffix>`` variant.
+
+    The original guard enumerated only ``.env``/``.env.local``/``.env.production``,
+    which silently let ``.env.development``, ``.env.staging``, ``.env.test`` and
+    every other environment-specific dotenv file slip through and be auto-approved.
+    """
+    return name == ".env" or name.startswith(".env.")
+
+
 def _is_sensitive_auto_approve_path(path: str) -> bool:
     parts = Path(path).expanduser().parts
     lowered = {part.lower() for part in parts}
     if ".git" in lowered or ".ssh" in lowered:
         return True
-    return Path(path).name.lower() in SENSITIVE_AUTO_APPROVE_NAMES
+    name = Path(path).name.lower()
+    return _is_sensitive_env_filename(name) or name in SENSITIVE_AUTO_APPROVE_NAMES
 
 
 def should_auto_approve_edit(proposal: EditProposal, policy: str, cwd: str | None = None) -> bool:
