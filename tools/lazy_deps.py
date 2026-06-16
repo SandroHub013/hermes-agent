@@ -636,7 +636,7 @@ def ensure_and_bind(
     """
     try:
         ensure(feature, prompt=prompt)
-    except (FeatureUnavailable, Exception):
+    except Exception:
         return False
 
     try:
