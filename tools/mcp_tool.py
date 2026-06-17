@@ -130,6 +130,7 @@ def _get_mcp_stderr_log() -> Any:
     with _mcp_stderr_log_lock:
         if _mcp_stderr_log_fh is not None:
             return _mcp_stderr_log_fh
+        fh = None
         try:
             from hermes_constants import get_hermes_home
             log_dir = get_hermes_home() / "logs"
@@ -143,6 +144,14 @@ def _get_mcp_stderr_log() -> Any:
             fh.fileno()
             _mcp_stderr_log_fh = fh
         except Exception as exc:  # pragma: no cover — best-effort fallback
+            # If open() succeeded but a later step (e.g. fileno()) raised, close
+            # the orphaned handle so we don't leak a file descriptor before
+            # falling back to devnull.
+            if fh is not None:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
             logger.debug("Failed to open MCP stderr log, using devnull: %s", exc)
             try:
                 _mcp_stderr_log_fh = open(os.devnull, "w", encoding="utf-8")

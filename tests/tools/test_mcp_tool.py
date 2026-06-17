@@ -4136,3 +4136,43 @@ class TestMcpParallelToolCalls:
             register_mcp_servers(config_off)
         with _lock:
             assert sanitize_mcp_name_component("toggle_srv") not in _parallel_safe_servers
+
+
+class TestMCPStderrLogFallback:
+    """The shared MCP stderr log handle must not leak fds on partial open."""
+
+    def test_fileno_failure_closes_orphaned_handle(self):
+        """If fileno() fails after open() succeeds, the handle is closed."""
+        import builtins
+        import tools.mcp_tool as mcp_tool
+
+        # Reset the cached handle so _get_mcp_stderr_log() re-opens.
+        saved = mcp_tool._mcp_stderr_log_fh
+        mcp_tool._mcp_stderr_log_fh = None
+        try:
+            log_fh = MagicMock()
+            # Simulate the sanity-check failing on a successfully opened file.
+            log_fh.fileno.side_effect = OSError("no fd")
+            devnull_fh = MagicMock()
+
+            real_open = builtins.open
+
+            def fake_open(path, *args, **kwargs):
+                # First call opens the log file (with append mode), second is
+                # the devnull fallback.
+                if "a" in args or kwargs.get("mode") == "a" or (
+                    args and args[0] == "a"
+                ):
+                    return log_fh
+                return devnull_fh
+
+            with patch("builtins.open", side_effect=fake_open):
+                result = mcp_tool._get_mcp_stderr_log()
+
+            # The orphaned log handle must have been closed exactly once.
+            log_fh.close.assert_called_once()
+            # And the fallback devnull handle is returned and cached.
+            assert result is devnull_fh
+            assert mcp_tool._mcp_stderr_log_fh is devnull_fh
+        finally:
+            mcp_tool._mcp_stderr_log_fh = saved
