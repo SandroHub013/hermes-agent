@@ -1467,6 +1467,45 @@ class TestFilterAndAccumulate:
         c._filter_and_accumulate("still hidden</think>visible")
         assert c._accumulated == "visible"
 
+    def test_standalone_lt_at_chunk_end_not_clipped(self):
+        """A trailing '<' in prose must not be held back (issue #48869).
+
+        '<' is a prefix of every open think tag, but a '<' that does not begin
+        at a block boundary can never start a real tag, so holding it back just
+        clips the streamed message until the stream ends.
+        """
+        c = _make_consumer()
+        c._filter_and_accumulate("The value is x ")
+        c._filter_and_accumulate("<")
+        # The '<' follows non-whitespace on its line — emit it immediately.
+        assert c._accumulated == "The value is x <"
+        assert c._think_buffer == ""
+
+    def test_less_than_comparison_streamed(self):
+        """A '<' comparison split across deltas streams without clipping."""
+        c = _make_consumer()
+        c._filter_and_accumulate("if a <")
+        c._filter_and_accumulate(" b: pass")
+        assert c._accumulated == "if a < b: pass"
+        assert c._think_buffer == ""
+
+    def test_partial_prefix_after_text_not_held(self):
+        """'<thi' mid-line (not a boundary) is emitted, not held back."""
+        c = _make_consumer()
+        c._filter_and_accumulate("see <thi")
+        assert c._accumulated == "see <thi"
+        assert c._think_buffer == ""
+
+    def test_partial_tag_at_boundary_still_held(self):
+        """A partial prefix at a real block boundary is still held back."""
+        c = _make_consumer()
+        c._filter_and_accumulate("Intro\n<")
+        # The '<' starts a new line — it could still become <think>, so hold it.
+        assert c._accumulated == "Intro\n"
+        assert c._think_buffer == "<"
+        c._filter_and_accumulate("think>hidden</think>shown")
+        assert c._accumulated == "Intro\nshown"
+
 
 class TestFilterAndAccumulateIntegration:
     """Integration: verify think blocks don't leak through the full run() path."""

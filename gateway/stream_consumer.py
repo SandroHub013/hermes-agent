@@ -416,12 +416,46 @@ class GatewayStreamConsumer:
                     self._in_think_block = True
                     buf = buf[best_idx + best_len:]
                 else:
-                    # No opening tag — check for a partial tag at the tail
+                    # No opening tag — check for a partial tag at the tail.
+                    #
+                    # Only hold a partial prefix back if it begins at a block
+                    # boundary (start of text / after a newline + optional
+                    # whitespace).  A full opening tag is only honoured at such
+                    # a boundary (see the detection loop above), so a prefix
+                    # that starts mid-line — e.g. a standalone ``<`` in prose
+                    # ("x < y") or a less-than comparison — can never complete
+                    # into a real think tag.  Holding it back would clip the
+                    # streamed message until the stream ends; emit it instead.
                     held_back = 0
                     for tag in self._OPEN_THINK_TAGS:
-                        for i in range(1, len(tag)):
-                            if buf.endswith(tag[:i]) and i > held_back:
+                        for i in range(len(tag) - 1, 0, -1):
+                            if not buf.endswith(tag[:i]):
+                                continue
+                            start = len(buf) - i
+                            if start == 0:
+                                is_boundary = (
+                                    not self._accumulated
+                                    or self._accumulated.endswith("\n")
+                                )
+                            else:
+                                preceding = buf[:start]
+                                last_nl = preceding.rfind("\n")
+                                if last_nl == -1:
+                                    is_boundary = (
+                                        (not self._accumulated
+                                         or self._accumulated.endswith("\n"))
+                                        and preceding.strip() == ""
+                                    )
+                                else:
+                                    is_boundary = (
+                                        preceding[last_nl + 1:].strip() == ""
+                                    )
+                            if is_boundary and i > held_back:
                                 held_back = i
+                            # Longer prefixes start earlier; if this (longest)
+                            # match for the tag is not at a boundary, no shorter
+                            # one will be either.
+                            break
                     if held_back:
                         self._accumulated += buf[:-held_back]
                         self._think_buffer = buf[-held_back:]
