@@ -380,11 +380,16 @@ def _stored_prompt_matches_runtime(agent, prompt: str) -> bool:
 
     def line_value(label: str) -> str:
         prefix = f"{label}:"
-        value = ""
+        # Return the FIRST matching line. The canonical runtime-identity
+        # header (Model:/Provider:) sits at the top of the system prompt;
+        # plugins can inject later lines that also start with these labels.
+        # Reading the last match instead let those spurious lines trigger a
+        # false staleness mismatch, forcing an unnecessary prompt rebuild and
+        # a prefix-cache miss every turn.
         for line in prompt.splitlines():
             if line.startswith(prefix):
-                value = line[len(prefix):].strip()
-        return value
+                return line[len(prefix):].strip()
+        return ""
 
     stored_model = line_value("Model")
     current_model = str(getattr(agent, "model", "") or "").strip()

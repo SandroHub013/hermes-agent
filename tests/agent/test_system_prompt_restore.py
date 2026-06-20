@@ -109,6 +109,38 @@ class TestStoredPromptReuse:
         )
         assert any("stale runtime identity" in r.getMessage() for r in caplog.records)
 
+    def test_duplicate_later_model_line_does_not_force_rebuild(self, caplog):
+        """A plugin-injected later ``Model:`` line must not look stale.
+
+        The runtime-identity check reads the canonical ``Model:``/``Provider:``
+        header at the top of the prompt. Plugins can append content that also
+        contains lines starting with ``Model:`` (e.g. a tool result or a
+        memory snippet). The matcher must compare against the FIRST such line,
+        not the last — otherwise the spurious trailing line forces an
+        unnecessary rebuild and a prefix-cache miss every turn.
+        """
+        stored = (
+            "You are Hermes Agent.\n\n"
+            "Session ID: test-session-id\n"
+            "Model: test-model\n"
+            "Provider: openrouter\n\n"
+            "## Context from plugin\n"
+            "Model: some-other-model-mentioned-in-content\n"
+            "Provider: some-other-provider"
+        )
+        db = MagicMock()
+        db.get_session.return_value = {"system_prompt": stored}
+        agent = _make_agent(session_db=db)  # model=test-model, provider=openrouter
+
+        with caplog.at_level(logging.INFO, logger="agent.conversation_loop"):
+            _restore_or_build_system_prompt(agent, None, [{"role": "user", "content": "hi"}])
+
+        # Header matches the live runtime → reuse verbatim, no rebuild.
+        assert agent._cached_system_prompt == stored
+        agent._build_system_prompt.assert_not_called()
+        db.update_system_prompt.assert_not_called()
+        assert not any("stale runtime identity" in r.getMessage() for r in caplog.records)
+
 
 # ---------------------------------------------------------------------------
 # Legitimate fresh-build paths (no history, no DB)
