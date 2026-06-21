@@ -2282,3 +2282,55 @@ class TestParallelSearchSourcesTimeout:
         assert source_counts.get("a") == 1
         assert source_counts.get("b") == 1
         assert len(all_results) == 2
+
+
+# ---------------------------------------------------------------------------
+# UTF-8 encoding of persisted cache / state files
+#
+# Regression: these files are written with ``ensure_ascii=False`` (so they can
+# contain raw non-ASCII community content such as CJK or emoji) and were read
+# and written via ``Path.read_text()`` / ``Path.write_text()`` without an
+# explicit ``encoding``.  That falls back to the platform locale, so on a
+# non-UTF-8 Windows locale (e.g. GBK / cp1252) the round-trip raises an
+# uncaught ``UnicodeEncodeError`` / ``UnicodeDecodeError`` (a ``ValueError``
+# subclass, not the ``OSError`` the callers guard against).  Pinning UTF-8
+# keeps the on-disk bytes deterministic across platforms.
+# ---------------------------------------------------------------------------
+
+
+class TestUtf8Encoding:
+    _NON_ASCII = "café — 日本語 — 🚀"
+
+    def test_lock_file_roundtrips_non_ascii_as_utf8(self, tmp_path):
+        # HubLockFile.save uses ensure_ascii=False, so non-ASCII content is
+        # written as raw bytes and MUST be UTF-8 to survive the round-trip.
+        lock_file = tmp_path / "lock.json"
+        lock = HubLockFile(path=lock_file)
+        lock.save({"version": 1, "installed": {"skill": {"note": self._NON_ASCII}}})
+
+        decoded = lock_file.read_bytes().decode("utf-8")
+        assert self._NON_ASCII in decoded
+        assert lock.load()["installed"]["skill"]["note"] == self._NON_ASCII
+
+    def test_taps_file_roundtrips_non_ascii_as_utf8(self, tmp_path):
+        taps_file = tmp_path / "taps.json"
+        mgr = TapsManager(path=taps_file)
+        assert mgr.add(self._NON_ASCII, "skills/") is True
+
+        # File must decode as UTF-8 and the value round-trips intact.
+        taps_file.read_bytes().decode("utf-8")
+        assert mgr.load()[0]["repo"] == self._NON_ASCII
+
+    def test_index_cache_roundtrips_non_ascii_as_utf8(self, tmp_path, monkeypatch):
+        from tools import skills_hub
+
+        monkeypatch.setattr(skills_hub, "HUB_DIR", tmp_path)
+        monkeypatch.setattr(skills_hub, "INDEX_CACHE_DIR", tmp_path / "cache")
+        payload = {"name": self._NON_ASCII, "items": [self._NON_ASCII]}
+
+        skills_hub._write_index_cache("key", payload)
+
+        cache_file = skills_hub.INDEX_CACHE_DIR / "key.json"
+        decoded = cache_file.read_bytes().decode("utf-8")
+        assert self._NON_ASCII in decoded
+        assert skills_hub._read_index_cache("key") == payload
