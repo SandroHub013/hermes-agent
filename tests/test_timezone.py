@@ -129,6 +129,24 @@ class TestGetTimezone:
         tz = hermes_time.get_timezone()
         assert tz is None
 
+    @pytest.mark.parametrize(
+        "bad_tz",
+        [
+            "Mars/Olympus_Mons",  # unknown key -> ZoneInfoNotFoundError
+            "/etc/localtime",     # absolute path -> ValueError
+            "../etc/passwd",      # path traversal -> ValueError
+        ],
+    )
+    def test_returns_none_for_malformed_keys(self, bad_tz):
+        """Both ZoneInfoNotFoundError and ValueError keys fall back safely.
+
+        Regression guard for the specific-exception narrowing in
+        ``_get_zoneinfo``: malformed keys (absolute paths, ``..`` traversal)
+        raise ValueError rather than KeyError, so they must remain caught.
+        """
+        os.environ["HERMES_TIMEZONE"] = bad_tz
+        assert hermes_time.get_timezone() is None
+
 
 
 # =========================================================================

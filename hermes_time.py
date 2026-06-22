@@ -22,10 +22,13 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 try:
-    from zoneinfo import ZoneInfo
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 except ImportError:
     # Python 3.8 fallback (shouldn't be needed — Hermes requires 3.9+)
-    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
+    from backports.zoneinfo import (  # type: ignore[no-redef]
+        ZoneInfo,
+        ZoneInfoNotFoundError,
+    )
 
 # Cached state — resolved once, reused on every call.
 # Call reset_cache() to force re-resolution (e.g. after config changes).
@@ -67,7 +70,14 @@ def _get_zoneinfo(name: str) -> Optional[ZoneInfo]:
         return None
     try:
         return ZoneInfo(name)
-    except (KeyError, Exception) as exc:
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        # ZoneInfo() raises ZoneInfoNotFoundError for unknown keys (also when
+        # no IANA database is available) and ValueError for malformed keys
+        # (absolute paths, ``..`` traversal, embedded NULs). Both map to a
+        # "bad timezone string" — fall back to server-local time instead of
+        # crashing. The previous ``(KeyError, Exception)`` catch was a
+        # redundant blind handler (Exception already covers KeyError, the
+        # parent of ZoneInfoNotFoundError).
         logger.warning(
             "Invalid timezone '%s': %s. Falling back to server local time.",
             name, exc,
