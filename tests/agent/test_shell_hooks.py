@@ -735,3 +735,41 @@ class TestAllowlistConcurrency:
 
         assert len(tmp_paths_seen) == 2
         assert tmp_paths_seen[0] != tmp_paths_seen[1]
+
+
+class TestAllowlistEncoding:
+    """The allowlist persists shell commands and paths that can contain
+    non-ASCII characters.  Both reads and writes must pin UTF-8 explicitly so
+    the file round-trips identically on platforms whose default text encoding
+    is the locale codepage (e.g. cp1252 on Windows) rather than UTF-8."""
+
+    def test_load_allowlist_reads_utf8_file(self, tmp_path, monkeypatch):
+        """A UTF-8 file with non-ASCII bytes (e.g. a user- or tool-edited
+        allowlist written with ensure_ascii=False) must decode correctly
+        regardless of the platform's default text encoding."""
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+        p = shell_hooks.allowlist_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+        command = "grep café /tmp/naïve-café"
+        p.write_text(
+            json.dumps({"approvals": [{"event": "e", "command": command}]}),
+            encoding="utf-8",
+        )
+
+        data = shell_hooks.load_allowlist()
+        assert data["approvals"][0]["command"] == command
+
+    def test_save_allowlist_round_trips_unicode(self, tmp_path, monkeypatch):
+        """save -> load preserves non-ASCII command strings byte-for-byte."""
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+        command = "echo Grüße 你好"
+        shell_hooks.save_allowlist(
+            {"approvals": [{"event": "e", "command": command}]}
+        )
+
+        # The on-disk bytes must be valid UTF-8 (never the locale codepage).
+        raw = shell_hooks.allowlist_path().read_bytes()
+        json.loads(raw.decode("utf-8"))
+
+        assert shell_hooks.load_allowlist()["approvals"][0]["command"] == command
