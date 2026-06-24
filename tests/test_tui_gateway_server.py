@@ -7052,3 +7052,26 @@ def test_reap_idle_sessions_closes_only_evictable(monkeypatch):
         assert closed == [("stale", "idle_timeout")]
     finally:
         server._sessions.clear()
+
+
+def test_content_display_text_covers_content_shapes():
+    # _content_display_text used to be defined twice in tui_gateway/server.py;
+    # the duplicate shadowed the first copy and was flagged by linters. This
+    # guards the single surviving implementation against regressions across the
+    # content shapes the resume/inflight renderers feed it.
+    assert server._content_display_text(None) == ""
+    assert server._content_display_text("hello") == "hello"
+    assert server._content_display_text(42) == "42"
+    assert (
+        server._content_display_text(
+            [
+                {"type": "text", "text": "look here"},
+                {"type": "image_url", "image_url": {"url": "u"}},
+            ]
+        )
+        == "look here\n[image]"
+    )
+    assert server._content_display_text({"type": "input_audio"}) == "[audio]"
+    assert server._content_display_text({"type": "custom"}) == "[custom]"
+    assert server._content_display_text({"text": "bare"}) == "bare"
+    assert server._content_display_text({"foo": "bar"}) == "[structured content]"
