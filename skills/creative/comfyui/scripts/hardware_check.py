@@ -68,7 +68,7 @@ def is_wsl() -> bool:
     if "microsoft" in platform.release().lower() or "wsl" in platform.release().lower():
         return True
     try:
-        with open("/proc/version", "r") as fh:
+        with open("/proc/version", "r", encoding="utf-8") as fh:
             return "microsoft" in fh.read().lower()
     except OSError:
         return False
@@ -227,12 +227,12 @@ def total_system_ram_gb() -> float:
             return 0.0
     if sysname == "Linux":
         try:
-            with open("/proc/meminfo", "r") as fh:
+            with open("/proc/meminfo", "r", encoding="utf-8") as fh:
                 for line in fh:
                     if line.startswith("MemTotal:"):
                         kb = int(line.split()[1])
                         return round(kb / (1024**2), 1)
-        except OSError:
+        except (OSError, ValueError, IndexError):
             return 0.0
     if sysname == "Windows":
         if shutil.which("powershell"):
