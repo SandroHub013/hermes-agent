@@ -104,6 +104,42 @@ class TestBlueBubblesHelpers:
         assert result.success is True
         assert sent == ["first thought", "second thought"]
 
+    @pytest.mark.asyncio
+    async def test_send_temp_guid_uses_utc_epoch(self, monkeypatch):
+        """tempGuid must carry a true POSIX (UTC) timestamp.
+
+        The previous implementation used ``datetime.utcnow().timestamp()``,
+        where ``utcnow()`` returns a *naive* datetime that ``.timestamp()``
+        then interprets as local time — drifting by the host's UTC offset on
+        any non-UTC machine. ``time.time()`` is the correct epoch value.
+        """
+        import time
+
+        adapter = _make_adapter(monkeypatch)
+        captured = []
+
+        async def fake_resolve_chat_guid(chat_id):
+            return "iMessage;-;user@example.com"
+
+        async def fake_api_post(path, payload):
+            captured.append(payload)
+            return {"data": {"guid": "msg-1"}}
+
+        monkeypatch.setattr(adapter, "_resolve_chat_guid", fake_resolve_chat_guid)
+        monkeypatch.setattr(adapter, "_api_post", fake_api_post)
+
+        before = time.time()
+        result = await adapter.send("user@example.com", "hi")
+        after = time.time()
+
+        assert result.success is True
+        assert len(captured) == 1
+        temp_guid = captured[0]["tempGuid"]
+        assert temp_guid.startswith("temp-")
+        ts = float(temp_guid[len("temp-"):])
+        # Allow a generous window; the bug would put this off by hours.
+        assert before - 1 <= ts <= after + 1
+
     def test_format_message_strips_markdown(self, monkeypatch):
         adapter = _make_adapter(monkeypatch)
         assert adapter.format_message("**Hello** `world`") == "Hello world"
